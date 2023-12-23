@@ -74,11 +74,10 @@ class ApiResultsControllerTest extends BaseTestCase
      */
     public function testPostResultAction201Created(): array
     {
-        $faker = \Faker\Factory::create();
         $resultData = [
-            Result::RESULT_ATTR => $faker->numberBetween($min = 1, $max = 100),
-            Result::TIME_ATTR => '2023-12-12 10:10:10',
-            Result::USER_ATTR => self::$role_user[User::EMAIL_ATTR],
+            Result::RESULT_ATTR => self::$faker->numberBetween($min = 1, $max = 100),
+            Result::TIME_ATTR =>  self::$faker->dateTimeThisMonth()->format('Y-m-d H:i:s'),
+            Result::USER_ATTR => self::$role_admin[User::EMAIL_ATTR],
         ];
 
         self::$client->request(
@@ -151,10 +150,10 @@ class ApiResultsControllerTest extends BaseTestCase
      * Test GET /results/{resultId} 200 Ok
      *
      * @param array $result result returned by testPostResultAction201Created()
-     * @return string ETag header
+     * @return array<int,string> resultId and Etag
      * @depends testPostResultAction201Created
      */
-    public function testGetResultAction200Ok(array $result): string
+    public function testGetResultAction200Ok(array $result): array
     {
         self::$client->request(
             Request::METHOD_GET,
@@ -171,28 +170,31 @@ class ApiResultsControllerTest extends BaseTestCase
         self::assertJson($r_body);
         $result_aux = json_decode($r_body, true)[Result::RESULT_ATTR];
         self::assertSame($result['id'], $result_aux['id']);
+        
+        $IdEtag =  ['id'=>$result['id'], 'etag'=> $response->getEtag()];
+        var_dump($IdEtag);
 
-        return (string) $response->getEtag();
+        return $IdEtag;
     }
 
     /**
      * Test GET /results/{resultId} 304 NOT MODIFIED
      *
-     * @param  array $result result returned by testPostResultAction201Created()
-     * @param  string $etag returned by testGetResultAction200Ok()
+     * @param  array<string ,string> $IdEtag returned by testGetResultAction200Ok()
      * @return string Entity tag
      *
-     * @depends testPostResultAction201Created
      * @depends testGetResultAction200Ok
      */
-    public function testGetResultAction304NotModified(array $result, string $etag): string
+    public function testGetResultAction304NotModified(array $IdEtag): string
     {
+        $etag = $IdEtag['etag'];
+        $id = $IdEtag['id'];
         $headers = array_merge(
             self::$adminHeaders,
             ['HTTP_If-None-Match' => [$etag]]
         );
 
-        self::$client->request(Request::METHOD_GET, self::RUTA_API . '/' . $result['id'], [], [], $headers);
+        self::$client->request(Request::METHOD_GET, self::RUTA_API . '/' . $id, [], [], $headers);
         $response = self::$client->getResponse();
         self::assertSame(Response::HTTP_NOT_MODIFIED, $response->getStatusCode());
         return $etag;
@@ -207,8 +209,8 @@ class ApiResultsControllerTest extends BaseTestCase
     {
         $invalidResultData = [
             Result::RESULT_ATTR => '10',
-            Result::USER_ATTR => self::$role_admin[User::EMAIL_ATTR],
-            Result::TIME_ATTR => 'invalid_timestamp_format',
+            Result::USER_ATTR =>  "user1@alumnos.upm.es",
+            Result::TIME_ATTR => self::$faker->time('Y-m-d H:i:s'),
 
         ];
         self::$client->request(
@@ -229,23 +231,26 @@ class ApiResultsControllerTest extends BaseTestCase
     /**
      * Test PUT /results/{resultId} 209 Content Returned
      *
-     * @param   array $result result returned by testPostResultAction201Created()
-     * @param   string $etag returned by testGetResultAction304NotModified()
+     * @param   array<string ,string> $IdEtag returned by testGetResultAction200Ok()
      * @return  array modified result data
-     * @depends testPostResultAction201Created
+     * @depends testGetResultAction200Ok
      * @depends testCGetResultAction304NotModified
      * @depends testGetResultAction304NotModified
+     * @depends testPostResultAction201Created
      */
-    public function testPutResultAction209ContentReturned(array $result, string $etag): array
+    public function testPutResultAction209ContentReturned(array $IdEtag): array
     {
+        $etag = $IdEtag['etag'];
+        $id = $IdEtag['id'];
         $updatedResultData = [
             Result::RESULT_ATTR =>self::$faker->numberBetween(0, 100),
             Result::TIME_ATTR => self::$faker->time('Y-m-d H:i:s'),
+            Result::USER_ATTR => self::$role_admin[User::EMAIL_ATTR],
 
         ];
         self::$client->request(
             Request::METHOD_PUT,
-            self::RUTA_API . '/' . $result['id'],
+            self::RUTA_API . '/' . $id,
             [],
             [],
             array_merge(
@@ -257,47 +262,48 @@ class ApiResultsControllerTest extends BaseTestCase
 
         $response = self::$client->getResponse();
         self::assertEquals(209, $response->getStatusCode());
-
         $r_body = (string) $response->getContent();
         self::assertJson($r_body);
         $result = json_decode(strval($r_body),true);
-        self::assertEquals($result['id'],$result[Result::RESULT_ATTR]['id']);
+        self::assertEquals($IdEtag['id'],$result[Result::RESULT_ATTR]['id']);
+
         return $result;
     }
 
     /**
      * Test PUT /results/{resultId} 400 Bad Request for Non-Admin Updating Other User's Result ID
      *
-     * @param array<string, mixed> $resultData Result data returned by testPutResultAction209ContentReturned()
+     * @param array $result Result data returned by testPutResultAction200ContentReturned()
      * @return void
      * @depends testPutResultAction209ContentReturned
      */
-    public function testPutResultAction400BadRequest(array $resultData): void
+    public function testPutResultAction400BadRequest(array $result): void
     {
-        var_dump($resultData);
-
-        if (!isset($resultData['id'])) {
-            self::fail('The $resultData array does not contain the expected "id" key.');
-        }
-
-        $newResultData = [
-            Result::RESULT_ATTR => $resultData[Result::RESULT_ATTR],
-            Result::TIME_ATTR => $resultData[Result::TIME_ATTR],
-            'user' => [
-                'id' => 999,
-            ],
+        $id = $result['result']['id'];
+        $updateResultData = [
+            Result::RESULT_ATTR =>self::$faker->numberBetween(0, 100),
+            Result::USER_ATTR => self::$role_admin[User::EMAIL_ATTR]
         ];
 
-
+        self::$client->request(
+            Request::METHOD_HEAD,
+            self::RUTA_API . '/' . $id,
+            [],
+            [],
+            self::$adminHeaders
+        );
+        $etag = self::$client->getResponse()->getEtag();
         self::$client->request(
             Request::METHOD_PUT,
-            self::RUTA_API . "/results/{$resultData['id']}",
+            self::RUTA_API . '/' . $id,
             [],
             [],
-            self::$userHeaders,
-            json_encode($newResultData)
+            array_merge(
+                self::$adminHeaders,
+                [ 'HTTP_If-Match' => $etag ]
+            ),
+            strval(json_encode($updateResultData))
         );
-
         $response = self::$client->getResponse();
         $this->checkResponseErrorMessage($response, Response::HTTP_BAD_REQUEST);
     }
@@ -305,20 +311,27 @@ class ApiResultsControllerTest extends BaseTestCase
     /**
      * Test PUT /results/{resultId} 412 PRECONDITION_FAILED
      *
-     * @param array<string, string> $result result returned by testPutResultAction209ContentReturned()
+     * @param array $result result returned by testPutResultAction209ContentReturned()
      *
      * @return void
      * @depends testPutResultAction209ContentReturned
      */
     public function testPutResultAction412PreconditionFailed(array $result): void
     {
+        $id = $result['result']['id'];
+        $resultData = [
+            Result::RESULT_ATTR=>1,
+            Result::TIME_ATTR=>'2023-12-12 10:10:10'
+        ];
         self::$client->request(
             Request::METHOD_PUT,
-            self::RUTA_API . '/' . $result['id'],
+            self::RUTA_API . '/' . $id,
             [],
             [],
-            self::$adminHeaders
+            array_merge(self::$adminHeaders, ['HTTP_If-Match' => '']),
+            strval(json_encode($resultData))
         );
+
         $response = self::$client->getResponse();
         $this->checkResponseErrorMessage($response, Response::HTTP_PRECONDITION_FAILED);
     }
@@ -330,8 +343,6 @@ class ApiResultsControllerTest extends BaseTestCase
      * @depends testPostResultAction201Created
      * @depends testPutResultAction209ContentReturned
      * @depends testPutResultAction412PreconditionFailed
-     * @depends testPutResultAction403Forbidden
-     * @depends testCGetResultAction200XmlOk
      */
     public function testDeleteResultAction204NoContent(array $result): int
     {
@@ -353,7 +364,7 @@ class ApiResultsControllerTest extends BaseTestCase
 
         self::$client->request(
             Request::METHOD_DELETE,
-            '/api/v1/results/' . $result['id'],
+            self::RUTA_API . '/' . $result['id'],
             [],
             [],
             self::$adminHeaders
@@ -372,19 +383,18 @@ class ApiResultsControllerTest extends BaseTestCase
     /**
      * Test POST /results 422 Unprocessable Entity
      *
-     * @dataProvider resultProvider422
-     * @depends testPutResultAction209ContentReturned
+     * @return void
      */
-    public function testPostResultAction422UnprocessableEntity(?string $result, ?string $time): void
+    public function testPostResultAction422UnprocessableEntity(): void
     {
         $p_data = [
-            Result::RESULT_ATTR => $result,
-            Result::TIME_ATTR => $time
+            Result::RESULT_ATTR => '10',
+            Result::USER_ATTR => self::$role_admin[User::EMAIL_ATTR],
         ];
 
         self::$client->request(
             Request::METHOD_POST,
-            self::RUTA_API . '/results',
+            self::RUTA_API,
             [],
             [],
             self::$adminHeaders,
@@ -459,30 +469,24 @@ class ApiResultsControllerTest extends BaseTestCase
      */
     public function testResultStatus403Forbidden(string $method, string $uri): void
     {
-
-        var_dump("Method: $method, URI: $uri");
-        $resultData = [
-            Result::RESULT_ATTR=>1,
-            Result::USER_ATTR=>self::$role_admin[User::EMAIL_ATTR],
-            Result::TIME_ATTR=>'2023-12-12 10:10:10'
-        ];
         self::$client->request(
             $method,
             $uri,
             [],
             [],
-            self::$userHeaders,
-            strval(json_encode($resultData))
+            self::$userHeaders, 
+            strval(json_encode([
+                Result::RESULT_ATTR => 3,
+                Result::USER_ATTR => self::$role_admin[User::EMAIL_ATTR],
+                Result::TIME_ATTR => '2023-12-12 10:10:10'
+            ]))
         );
 
         $this->checkResponseErrorMessage(
             self::$client->getResponse(),
             Response::HTTP_FORBIDDEN
         );
-
-
     }
-
     /**
      * Result provider (incomplete) -> 422 status code
      *

@@ -50,7 +50,6 @@ class ApiResultsQueryController  extends AbstractController implements ApiResult
      *     methods={ Request::METHOD_GET },
      *     name="cget"
      * )
-     *
      * @throws JsonException
      */
     public function cgetAction(Request $request): Response
@@ -244,7 +243,36 @@ class ApiResultsQueryController  extends AbstractController implements ApiResult
                 $format
             );
         }
+
         $user = $this->getUser();
+        $body = (string) $request->getContent();
+        $postData = json_decode($body, true);
+        if (isset($postData[Result::USER_ATTR])) {
+            $user = $this->entityManager->getRepository(User::class)->findOneBy([User::EMAIL_ATTR => $postData[Result::USER_ATTR]]);
+            if (!$user) {
+                return Utils::errorMessage(
+                    Response::HTTP_NOT_FOUND,
+                    'User with email:' . $postData[Result::USER_ATTR] . ' not found',
+                    $format
+                );
+            }
+        }
+       
+        if (!isset($postData[Result::TIME_ATTR]) || !strtotime($postData[Result::TIME_ATTR])) {
+            return Utils::errorMessage(
+                Response::HTTP_BAD_REQUEST,
+                'Invalid or missing time format. Please provide a valid time.',
+                $format
+            );
+        }
+        $etag = md5(json_encode($result, JSON_THROW_ON_ERROR));
+        if (!$request->headers->has('If-Match') || $etag != $request->headers->get('If-Match')) {
+            return Utils::errorMessage(
+                Response::HTTP_PRECONDITION_FAILED,
+                'PRECONDITION FAILED: one or more conditions given evaluated to false',
+                $format
+            ); 
+        }
         if (!$this->canDealResult($user, $result)) {
             return Utils::errorMessage(
                 Response::HTTP_FORBIDDEN,
@@ -252,9 +280,6 @@ class ApiResultsQueryController  extends AbstractController implements ApiResult
                 $format
             );
         }
-        $body = (string) $request->getContent();
-        $postData = json_decode($body, true);
-
         if (isset($postData[Result::RESULT_ATTR])) {
             $result->setResult($postData[Result::RESULT_ATTR]);
         }
@@ -264,7 +289,7 @@ class ApiResultsQueryController  extends AbstractController implements ApiResult
 
         $this->entityManager->flush();
         return Utils::apiResponse(
-            Response::HTTP_OK,
+            209,
             [Result::RESULT_ATTR => $result],
             $format
         );
